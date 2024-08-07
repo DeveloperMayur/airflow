@@ -41,7 +41,8 @@
 {{- $safeToEvict := dict "cluster-autoscaler.kubernetes.io/safe-to-evict" (.Values.workers.safeToEvict | toString) }}
 {{- $podAnnotations := mergeOverwrite (deepCopy .Values.airflowPodAnnotations) $safeToEvict .Values.workers.podAnnotations }}
 apiVersion: apps/v1
-kind: {{ if $persistence }}StatefulSet{{ else }}Deployment{{ end }}
+# kind: {{ if $persistence }}StatefulSet{{ else }}Deployment{{ end }}
+kind: StatefulSet
 metadata:
   name: {{ include "airflow.fullname" . }}-worker
   labels:
@@ -136,6 +137,7 @@ spec:
         - name: {{ template "registry_secret" . }}
       {{- end }}
       initContainers:
+
         {{- if and $persistence .Values.workers.persistence.fixPermissions }}
         - name: volume-permissions
           resources: {{- toYaml .Values.workers.resources | nindent 12 }}
@@ -151,6 +153,7 @@ spec:
             - name: logs
               mountPath: {{ template "airflow_logs" . }}
         {{- end }}
+
         {{- if and (semverCompare ">=2.8.0" .Values.airflowVersion) .Values.workers.kerberosInitContainer.enabled }}
         - name: kerberos-init
           image: {{ template "airflow_image" . }}
@@ -190,6 +193,7 @@ spec:
             {{- include "custom_airflow_environment" . | indent 10 }}
             {{- include "standard_airflow_environment" . | indent 10 }}
         {{- end }}
+
         {{- if .Values.workers.waitForMigrations.enabled }}
         - name: wait-for-airflow-migrations
           resources: {{- toYaml .Values.workers.resources | nindent 12 }}
@@ -216,12 +220,19 @@ spec:
               {{- tpl (toYaml .Values.workers.waitForMigrations.env) $ | nindent 12 }}
             {{- end }}
         {{- end }}
+
         {{- if and (.Values.dags.gitSync.enabled) (not .Values.dags.persistence.enabled) }}
           {{- include "git_sync_container" (dict "Values" .Values "is_init" "true" "Template" .Template) | nindent 8 }}
         {{- end }}
+
+        {{- if and (.Values.dags.s3Sync.enabled) (not .Values.dags.persistence.enabled) }}
+          {{- include "airflow.container.s3_initial_sync" (dict "Release" .Release "Values" .Values) | indent 8 }}
+        {{- end }} | indent 8 }}
+
         {{- if .Values.workers.extraInitContainers }}
           {{- toYaml .Values.workers.extraInitContainers | nindent 8 }}
         {{- end }}
+
       containers:
         - name: worker
           image: {{ template "airflow_image" . }}
@@ -299,9 +310,15 @@ spec:
             - name: KRB5CCNAME
               value:  {{ include "kerberos_ccache_path" . | quote }}
             {{- end }}
+        
+        {{- if .Values.dags.s3Sync.enabled }}
+          {{- include "airflow.container.s3_sync" . | indent 8 }}
+        {{- end }}
+
         {{- if and (.Values.dags.gitSync.enabled) (not .Values.dags.persistence.enabled) }}
           {{- include "git_sync_container" . | nindent 8 }}
         {{- end }}
+
         {{- if and $persistence .Values.workers.logGroomerSidecar.enabled }}
         - name: worker-log-groomer
           image: {{ template "airflow_image" . }}
@@ -337,6 +354,7 @@ spec:
               {{- include "airflow_webserver_config_mount" . | nindent 12 }}
             {{- end }}
         {{- end }}
+
         {{- if .Values.workers.kerberosSidecar.enabled }}
         - name: worker-kerberos
           image: {{ template "airflow_image" . }}
@@ -380,9 +398,11 @@ spec:
             {{- include "custom_airflow_environment" . | indent 10 }}
             {{- include "standard_airflow_environment" . | indent 10 }}
         {{- end }}
+
         {{- if .Values.workers.extraContainers }}
           {{- tpl (toYaml .Values.workers.extraContainers) . | nindent 8 }}
         {{- end }}
+
       volumes:
         {{- if .Values.volumes }}
           {{- toYaml .Values.volumes | nindent 8 }}
